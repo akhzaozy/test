@@ -11,14 +11,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-      - name: Fast Upload to AutoHost
+      - name: Create deployment package
+        run: |
+          echo "📦 Membuat deploy.zip ..."
+          zip -r deploy.zip . -x ".git/*" ".github/*"
+
+      - name: Upload to AutoHost
         run: |
           REPO_NAME=${{ github.event.repository.name }}
+          AUTOHOST_URL="https://autohost.akhzafachrozy.my.id"
+
           echo "🚀 Uploading to AutoHost ($REPO_NAME)..."
           curl -s -S -k -m 90 --connect-timeout 10 \
             -X POST \
             -F "repo=$REPO_NAME" \
             -F "file=@deploy.zip" \
-            https://autohost.akhzafachrozy.my.id
+            "$AUTOHOST_URL"
