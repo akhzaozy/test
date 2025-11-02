@@ -1,4 +1,4 @@
-name: Auto Deploy to STB (Fast Mode)
+name: Auto Deploy to STB (Async Single File)
 
 on:
   push:
@@ -16,12 +16,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build Deploy Package
+      - name: Build deploy package
         run: |
           echo "📦 Membuat paket deploy..."
           git diff --name-only HEAD^ HEAD > changed_files.txt || true
-          git diff --name-status HEAD^ HEAD | grep '^D' | cut -f2 > deleted_files.txt || true
-
           mkdir deploy_package
           while read file; do
             if [ -f "$file" ]; then
@@ -29,19 +27,15 @@ jobs:
               cp "$file" "deploy_package/$file"
             fi
           done < changed_files.txt
-
-          cp deleted_files.txt deploy_package/ || true
           cd deploy_package
           zip -r -q ../deploy.zip .
           cd ..
 
-      - name: 🚀 Upload to AutoHost
+      - name: 🚀 Upload to AutoHost (Async)
         run: |
           REPO_NAME=${{ github.event.repository.name }}
           echo "🚀 Uploading to AutoHost ($REPO_NAME)..."
-          time curl -s -S -k -m 60 --connect-timeout 10 \
-            -w "\n✅ Done in %{time_total}s, status %{http_code}\n" \
-            -o response.log \
+          curl -s -S -k -m 10 --connect-timeout 5 \
             -X POST -F "repo=$REPO_NAME" -F "file=@deploy.zip" \
             https://autohost.akhzafachrozy.my.id
-          cat response.log
+          echo "✅ Upload selesai, deploy berjalan di background di STB."
