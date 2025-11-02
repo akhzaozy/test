@@ -1,4 +1,4 @@
-name: Auto Deploy to STB (Lite)
+name: Auto Deploy to Kucingarong
 
 on:
   push:
@@ -21,14 +21,18 @@ jobs:
           echo "📦 Membuat deploy.zip ..."
           zip -r deploy.zip . -x ".git/*" ".github/*"
 
-      - name: Upload to AutoHost
+      - name: Upload to Kucingarong
         run: |
           REPO_NAME=${{ github.event.repository.name }}
-          AUTOHOST_URL="https://autohost.akhzafachrozy.my.id"
+          AUTOHOST_URL="https://cicak.akhzafachrozy.my.id"  # ubah jika belum dikonfigurasi di Cloudflare
 
-          echo "🚀 Uploading to AutoHost ($REPO_NAME)..."
-          curl -s -S -k -m 90 --connect-timeout 10 \
+          echo "🚀 Uploading to Kucingarong ($REPO_NAME)..."
+          RESPONSE=$(curl -s -S -k -m 120 --connect-timeout 15 \
             -X POST \
             -F "repo=$REPO_NAME" \
             -F "file=@deploy.zip" \
-            "$AUTOHOST_URL"
+            "$AUTOHOST_URL")
+
+          echo "📜 ===== RESPONSE DARI SERVER ====="
+          echo "$RESPONSE"
+          echo "📜 ================================="
