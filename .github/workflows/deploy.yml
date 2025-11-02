@@ -29,7 +29,13 @@ jobs:
           else
             echo "🔄 Repo sudah pernah di-hosting, kirim file yang berubah saja..."
             git fetch origin main || true
-            git diff --name-only HEAD^ HEAD > changed_files.txt
+           if git rev-parse HEAD^ >/dev/null 2>&1; then
+              echo "🔄 Menghitung perubahan antar commit..."
+              git diff --name-only HEAD^ HEAD > changed_files.txt
+            else
+              echo "🆕 Commit pertama, kirim full project..."
+              find . -type f ! -path "./.git/*" ! -path "./.github/*" > changed_files.txt
+            fi
             mkdir deploy_package
 
             while read file; do
