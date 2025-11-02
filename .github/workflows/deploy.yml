@@ -1,4 +1,4 @@
-name: Auto Deploy to STB (Async Single File)
+name: Auto Deploy to STB Host
 
 on:
   push:
@@ -11,15 +11,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: 🧾 Checkout Repository
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Build deploy package
+      - name: 📦 Prepare Deploy Package
         run: |
           echo "📦 Membuat paket deploy..."
+          git fetch origin || true
           git diff --name-only HEAD^ HEAD > changed_files.txt || true
+          git diff --name-status HEAD^ HEAD | grep '^D' | cut -f2 > deleted_files.txt || true
+
           mkdir deploy_package
           while read file; do
             if [ -f "$file" ]; then
@@ -27,15 +30,39 @@ jobs:
               cp "$file" "deploy_package/$file"
             fi
           done < changed_files.txt
+
+          cp deleted_files.txt deploy_package/ || true
+
           cd deploy_package
           zip -r -q ../deploy.zip .
           cd ..
+          echo "✅ deploy.zip dibuat."
 
-      - name: 🚀 Upload to AutoHost (Async)
+      - name: 🚀 Upload & Deploy to AutoHost
         run: |
           REPO_NAME=${{ github.event.repository.name }}
-          echo "🚀 Uploading to AutoHost ($REPO_NAME)..."
-          curl -s -S -k -m 10 --connect-timeout 5 \
-            -X POST -F "repo=$REPO_NAME" -F "file=@deploy.zip" \
-            https://autohost.akhzafachrozy.my.id
-          echo "✅ Upload selesai, deploy berjalan di background di STB."
+          AUTOHOST_URL="https://autohost.akhzafachrozy.my.id"
+
+          echo "🚀 Mengirim paket deploy ke AutoHost ($REPO_NAME)..."
+          RESPONSE=$(curl -s -S -k -m 120 --connect-timeout 15 \
+            -X POST \
+            -F "repo=$REPO_NAME" \
+            -F "file=@deploy.zip" \
+            "$AUTOHOST_URL")
+
+          echo "📜 ===== RESPONSE DARI SERVER ====="
+          echo "$RESPONSE"
+          echo "📜 ================================="
+
+      - name: 🧠 Simpan Info Login ke Artifact
+        if: always()
+        run: |
+          echo "Menyimpan hasil respon ke file..."
+          echo "$RESPONSE" > deploy-info.txt
+          echo "✅ Selesai, file tersimpan."
+
+      - name: 📤 Upload Deployment Info Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-info
+          path: deploy-info.txt
