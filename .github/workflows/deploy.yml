@@ -1,49 +1,50 @@
-name: Auto Deploy to AutoHost STB
+name: Smart Auto Deploy to STB
 
 on:
   push:
     branches:
       - main
+      - development
 
 jobs:
   deploy:
-    name: Build & Deploy to STB
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
+        uses: actions/checkout@v3
 
-      - name: Build delta package
-        shell: bash
+      - name: Detect full or diff deploy
         run: |
-          set -e
-          echo "🧩 Membuat paket delta..."
-          git diff --name-only HEAD^ HEAD > changed_files.txt || true
-          git diff --name-status HEAD^ HEAD | awk '$1=="D"{print $2}' > deleted_files.txt || true
+          # === VARIABEL DASAR ===
+          REPO_NAME=${{ github.event.repository.name }}
+          AUTOHOST_URL="https://autohost.akhzafachrozy.my.id"
 
-          mkdir -p deploy_package
+          echo "🚀 Checking hosting status for $REPO_NAME ..."
+          STATUS_CODE=$(curl -o /dev/null -s -w "%{http_code}" "$AUTOHOST_URL/status?repo=$REPO_NAME")
 
-          if [ -s changed_files.txt ]; then
-            while IFS= read -r f; do
-              [ -f "$f" ] || continue
-              mkdir -p "deploy_package/$(dirname "$f")"
-              cp -a "$f" "deploy_package/$f"
+          if [ "$STATUS_CODE" = "404" ]; then
+            echo "🆕 Repo belum pernah di-hosting, kirim full project..."
+            zip -r deploy.zip . -x ".git/*" ".github/*"
+          else
+            echo "🔄 Repo sudah pernah di-hosting, kirim file yang berubah saja..."
+            git fetch origin main || true
+            git diff --name-only HEAD^ HEAD > changed_files.txt
+            mkdir deploy_package
+
+            while read file; do
+              if [ -f "$file" ]; then
+                mkdir -p "deploy_package/$(dirname "$file")"
+                cp "$file" "deploy_package/$file"
+              fi
             done < changed_files.txt
+
+            cd deploy_package
+            zip -r ../deploy.zip .
+            cd ..
           fi
-
-          cp -f deleted_files.txt deploy_package/ || true
-          echo "${{ github.repository_owner }}" > deploy_package/REPO_OWNER
-          echo "${{ github.event.repository.name }}" > deploy_package/REPO_NAME
-
-          (cd deploy_package && zip -r ../deploy.zip .)
 
       - name: Upload to AutoHost
         run: |
-          echo "🚀 Uploading to AutoHost..."
-          curl -sS -X POST \
-            -F "file=@deploy.zip" \
-            -F "repo=${{ github.event.repository.name }}" \
-            https://autohost.akhzafachrozy.my.id
+          REPO_NAME=${{ github.event.repository.name }}
+          curl -X POST -F "repo=$REPO_NAME" -F "file=@deploy.zip" https://autohost.akhzafachrozy.my.id
