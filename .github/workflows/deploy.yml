@@ -1,1 +1,49 @@
-404: Not Found
+name: Auto Deploy to AutoHost STB
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build & Deploy to STB
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Build delta package
+        shell: bash
+        run: |
+          set -e
+          echo "🧩 Membuat paket delta..."
+          git diff --name-only HEAD^ HEAD > changed_files.txt || true
+          git diff --name-status HEAD^ HEAD | awk '$1=="D"{print $2}' > deleted_files.txt || true
+
+          mkdir -p deploy_package
+
+          if [ -s changed_files.txt ]; then
+            while IFS= read -r f; do
+              [ -f "$f" ] || continue
+              mkdir -p "deploy_package/$(dirname "$f")"
+              cp -a "$f" "deploy_package/$f"
+            done < changed_files.txt
+          fi
+
+          cp -f deleted_files.txt deploy_package/ || true
+          echo "${{ github.repository_owner }}" > deploy_package/REPO_OWNER
+          echo "${{ github.event.repository.name }}" > deploy_package/REPO_NAME
+
+          (cd deploy_package && zip -r ../deploy.zip .)
+
+      - name: Upload to AutoHost
+        run: |
+          echo "🚀 Uploading to AutoHost..."
+          curl -sS -X POST \
+            -F "file=@deploy.zip" \
+            -F "repo=${{ github.event.repository.name }}" \
+            https://autohost.akhzafachrozy.my.id
