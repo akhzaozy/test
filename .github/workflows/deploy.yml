@@ -45,7 +45,7 @@ jobs:
           echo "$RESPONSE"
           echo "📜 ================================="
 
-      # 4️⃣ Simpan log output ke artifact (opsional tapi berguna)
+      # 4️⃣ Simpan log output ke artifact (opsional tapi berguna) woww
       - name: 🗂️ Save deploy log
         if: always()
         run: echo "$RESPONSE" > deploy_output.log
