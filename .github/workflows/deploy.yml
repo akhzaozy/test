@@ -1,35 +1,33 @@
-name: Auto Deploy to Kucingarong STB
+name: Auto Deploy to Kucingarong
 
 on:
   push:
     branches:
       - main
       - development
+      - feature/**
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Zip and Upload
+      - name: Zip Repository
+        run: zip -r deploy.zip . -x "*.git*" "*.github*"
+
+      - name: Deploy to Kucingarong AutoHost
+        env:
+          AUTOHOST_URL: "https://cicak.akhzafachrozy.my.id"
+          REPO_NAME: ${{ github.event.repository.name }}
         run: |
-          REPO_NAME=${{ github.event.repository.name }}
-          AUTOHOST_URL="https://cicak.akhzafachrozy.my.id"
-
           echo "🚀 Deploying $REPO_NAME to $AUTOHOST_URL..."
-          zip -r deploy.zip . -x ".git/*" ".github/*"
-
-          RESPONSE=$(curl -s -S -k -m 120 --connect-timeout 10 \
+          RESPONSE=$(curl -s -S -k -m 240 --connect-timeout 15 \
             -X POST \
             -F "repo=$REPO_NAME" \
             -F "file=@deploy.zip" \
             "$AUTOHOST_URL")
-
-          echo "📜 ===== RESPONSE FROM SERVER ====="
+          echo "📜 ===== RESPONSE ====="
           echo "$RESPONSE"
-          echo "📜 ================================="
+          echo "📜 ===================="
