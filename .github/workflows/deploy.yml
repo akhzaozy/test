@@ -1,34 +1,58 @@
-name: Auto Deploy to Kucingarong (Composer)
+name: 🚀 Auto Deploy to Kucingarong
 
 on:
   push:
     branches:
       - main
       - development
+      - feature/**
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      # 1️⃣ Checkout repo
+      - name: 🧩 Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Build deploy.zip
+      # 2️⃣ Zip seluruh repo (kecuali vendor dan node_modules)
+      - name: 📦 Create deploy package
         run: |
-          echo "📦 Membuat deploy.zip..."
-          zip -r deploy.zip . -x ".git/*" ".github/*"
+          echo "Zipping repository..."
+          zip -r deploy.zip . \
+            -x "*.git*" \
+               "vendor/*" \
+               "node_modules/*" \
+               "*.github/*" \
+               "*.DS_Store"
+          echo "✅ ZIP package created"
 
-      - name: 🚀 Upload to Kucingarong
+      # 3️⃣ Upload ke server AutoHost (Kucingarong)
+      - name: 🚀 Upload to Kucingarong AutoHost
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          AUTOHOST_URL: "https://cicak.akhzafachrozy.my.id"   # ubah ke domain kamu
         run: |
-          REPO_NAME=${{ github.event.repository.name }}
-          AUTOHOST_URL="https://cicak.akhzafachrozy.my.id"
-          echo "🚀 Mengirim $REPO_NAME ke $AUTOHOST_URL..."
-          RESPONSE=$(curl -s -S -k -m 120 --connect-timeout 15 \
+          echo "🚀 Deploying $REPO_NAME to $AUTOHOST_URL..."
+          RESPONSE=$(curl -s -S -k -m 180 --connect-timeout 15 \
             -X POST \
             -F "repo=$REPO_NAME" \
             -F "file=@deploy.zip" \
             "$AUTOHOST_URL")
-          echo "📜 ===== RESPONSE DARI SERVER ====="
+
+          echo "📜 ===== RESPONSE FROM SERVER ====="
           echo "$RESPONSE"
           echo "📜 ================================="
+
+      # 4️⃣ Simpan log output ke artifact (opsional tapi berguna)
+      - name: 🗂️ Save deploy log
+        if: always()
+        run: echo "$RESPONSE" > deploy_output.log
+
+      - name: 📤 Upload log as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-log
+          path: deploy_output.log
