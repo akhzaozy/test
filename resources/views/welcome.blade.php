@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aplikasi Kucingarong TERBANG</title>
+    <title>Aplikasi Kucingarong TERBANG JATUH LAGI KOCAKLAH</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         /* Gaya tambahan untuk tema gelap */
