@@ -1,47 +1,432 @@
-name: 🚀 Auto Deploy ke STB
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  AutoDeploy v2 — GitHub Actions Workflow                     ║
+# ║  File   : .github/workflows/deploy.yml                       ║
+# ║                                                               ║
+# ║  PHP Native → deploy → service langsung start → LIVE         ║
+# ║  Laravel    → deploy → service TIDAK distart                  ║
+# ║               mahasiswa SSH → setup manual → systemctl restart║
+# ╚══════════════════════════════════════════════════════════════╝
+
+name: 🚀 AutoDeploy v2
 
 on:
   push:
     branches:
       - main
-      - development
+      - master
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'README*'
+
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Mode deploy'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - update
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  # ──────────────────────────────────────────────────────
+  #  JOB 1: DETECT & VALIDATE
+  # ──────────────────────────────────────────────────────
+  detect:
+    name: 🔍 Detect & Validate
     runs-on: ubuntu-latest
+    outputs:
+      app_type:    ${{ steps.detect.outputs.app_type }}
+      repo_slug:   ${{ steps.slug.outputs.repo_slug }}
+      deploy_mode: ${{ steps.mode.outputs.deploy_mode }}
+
     steps:
-      - name: 📦 Checkout repository
+      - name: ⬇️ Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: 🧰 Install zip utility
-        run: sudo apt-get install zip -y
-
-      - name: 📁 Buat file ZIP untuk deploy
+      # ── Buat repo slug dari nama repository ──────────
+      - name: 🏷️ Generate repo slug
+        id: slug
         run: |
-          zip -r deploy.zip . -x ".git*" -x ".github*" -x "node_modules/*"
+          SLUG=$(echo "${{ github.event.repository.name }}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9-]/-/g' \
+            | sed 's/--*/-/g' \
+            | sed 's/^-//;s/-$//')
+          echo "repo_slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "✅ Repo slug: $SLUG"
 
-      - name: 🚀 Upload ke STB Server
-        id: deploy
+      # ── Deteksi framework ────────────────────────────
+      - name: 🔎 Detect framework
+        id: detect
         run: |
-          echo "🚀 Uploading ${{ github.repository }}..."
-          RESPONSE=$(curl -s -S -k -m 60 --connect-timeout 10 \
-            -X POST \
-            -F "repo=${{ github.event.repository.name }}" \
-            -F "file=@deploy.zip" \
-            "https://deploy.akhzafachrozy.my.id/")
-          echo "$RESPONSE"
-          
-          # Ambil port dari respons
-          PORT=$(echo "$RESPONSE" | grep -oP '(?<=Port:\s)\d+')
-          if [ -z "$PORT" ]; then
-            echo "⚠️ Port tidak terdeteksi!"
+          if [[ -f "artisan" && -f "composer.json" ]] && \
+             grep -q '"laravel/framework"' composer.json 2>/dev/null; then
+            echo "app_type=laravel" >> "$GITHUB_OUTPUT"
+            echo "✅ Framework terdeteksi: Laravel"
+            echo ""
+            echo "ℹ️  CATATAN LARAVEL:"
+            echo "   Composer install TIDAK dilakukan di sini."
+            echo "   Mahasiswa wajib SSH dan setup manual:"
+            echo "   1. composer install --no-dev --optimize-autoloader"
+            echo "   2. cp .env.example .env && nano .env"
+            echo "   3. php artisan key:generate"
+            echo "   4. php artisan migrate --force"
+            echo "   5. php artisan storage:link"
+            echo "   6. sudo systemctl restart autodeploy-<repo>.service"
           else
-            echo "🌐 Aplikasi berjalan di port: $PORT"
-            echo "port=$PORT" >> $GITHUB_OUTPUT
+            echo "app_type=php-native" >> "$GITHUB_OUTPUT"
+            echo "✅ Framework terdeteksi: PHP Native"
+            echo "   Web akan langsung LIVE setelah deploy selesai."
           fi
 
-      - name: ✅ Selesai
+      # ── Tentukan mode deploy ─────────────────────────
+      - name: 📋 Set deploy mode
+        id: mode
         run: |
-          echo "🎉 Deploy sukses!"
-          echo "🔗 Log server: /var/log/autodeploy_${{ github.event.repository.name }}.log"
-          echo "🌐 Port aktif: ${{ steps.deploy.outputs.port }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            MODE="${{ inputs.mode }}"
+          else
+            MODE="full"
+          fi
+          echo "deploy_mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "📦 Mode: $MODE"
+
+      # ── Validasi syntax PHP ──────────────────────────
+      - name: 🧪 PHP syntax lint
+        run: |
+          sudo apt-get install -y php-cli -qq 2>/dev/null || true
+          ERRORS=0
+          while IFS= read -r -d '' file; do
+            if ! php -l "$file" > /dev/null 2>&1; then
+              echo "❌ Syntax error: $file"
+              php -l "$file"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done < <(find . \
+            -name "*.php" \
+            -not -path "./vendor/*" \
+            -not -path "./node_modules/*" \
+            -not -path "./.git/*" \
+            -print0)
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "❌ Ditemukan $ERRORS file dengan syntax error — deploy dibatalkan!"
+            exit 1
+          fi
+          echo "✅ Semua file PHP valid ($ERRORS error)"
+
+  # ──────────────────────────────────────────────────────
+  #  JOB 2: PACKAGE & DEPLOY
+  #  • Tidak ada composer install di sini
+  #  • Untuk Laravel: vendor/ sengaja TIDAK disertakan
+  #    (mahasiswa install sendiri via SSH)
+  #  • Untuk PHP Native: semua file langsung di-ZIP dan dikirim
+  # ──────────────────────────────────────────────────────
+  deploy:
+    name: 🚀 Package & Deploy
+    runs-on: ubuntu-latest
+    needs: detect
+
+    env:
+      REPO_SLUG:   ${{ needs.detect.outputs.repo_slug }}
+      APP_TYPE:    ${{ needs.detect.outputs.app_type }}
+      DEPLOY_MODE: ${{ needs.detect.outputs.deploy_mode }}
+      DEPLOY_URL:  https://deployv2.akhzafachrozy.my.id
+
+    steps:
+      - name: ⬇️ Checkout
+        uses: actions/checkout@v4
+
+      # ── Buat .deployinfo ──────────────────────────────
+      - name: 📝 Create deploy info file
+        run: |
+          cat > .deployinfo << EOF
+          repo=$REPO_SLUG
+          type=$APP_TYPE
+          commit=${{ github.sha }}
+          branch=${{ github.ref_name }}
+          actor=${{ github.actor }}
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          run_id=${{ github.run_id }}
+          EOF
+          echo "✅ .deployinfo dibuat"
+
+      # ── Buat ZIP ──────────────────────────────────────
+      - name: 📦 Create deployment ZIP
+        run: |
+          echo "📦 Membuat ZIP untuk $APP_TYPE ..."
+
+          # Exclude yang sama untuk semua tipe
+          BASE_EXCLUDES=(
+            ".git/*"
+            ".github/*"
+            "*.log"
+            ".DS_Store"
+            "Thumbs.db"
+            "*.swp"
+            "*.swo"
+            ".idea/*"
+            ".vscode/*"
+            "tests/*"
+            "test/*"
+            "spec/*"
+            "__tests__/*"
+            "*.test.php"
+            "*.spec.php"
+            "phpunit.xml"
+            "phpunit.xml.dist"
+            ".phpunit*"
+            ".env"
+            ".env.*"
+          )
+
+          # Exclude tambahan untuk Laravel
+          LARAVEL_EXCLUDES=(
+            "vendor/*"
+            "node_modules/*"
+            "storage/logs/*"
+            "storage/framework/cache/*"
+            "storage/framework/sessions/*"
+            "storage/framework/views/*"
+            "bootstrap/cache/*"
+          )
+
+          # Build exclude flags
+          EXCLUDE_FLAGS=()
+          for ex in "${BASE_EXCLUDES[@]}"; do
+            EXCLUDE_FLAGS+=("--exclude=$ex")
+          done
+
+          if [[ "$APP_TYPE" == "laravel" ]]; then
+            echo "ℹ️  Laravel: vendor/ dan .env dikecualikan dari ZIP"
+            echo "   (mahasiswa install sendiri via SSH setelah deploy)"
+            for ex in "${LARAVEL_EXCLUDES[@]}"; do
+              EXCLUDE_FLAGS+=("--exclude=$ex")
+            done
+          fi
+
+          zip -r deploy.zip . \
+            "${EXCLUDE_FLAGS[@]}" \
+            -x "deploy.zip" \
+            -q
+
+          SIZE=$(du -sh deploy.zip | cut -f1)
+          FILE_COUNT=$(unzip -l deploy.zip | tail -1 | awk '{print $2}')
+          echo "✅ ZIP dibuat: deploy.zip ($SIZE, $FILE_COUNT files)"
+          echo "zip_size=$SIZE" >> "$GITHUB_ENV"
+          echo "zip_files=$FILE_COUNT" >> "$GITHUB_ENV"
+
+      # ── Kirim ke endpoint ─────────────────────────────
+      - name: 🌐 Send to deploy endpoint
+        id: deploy_request
+        run: |
+          echo "════════════════════════════════════════════════"
+          echo "  Mengirim ke endpoint deploy ..."
+          echo "  URL  : $DEPLOY_URL"
+          echo "  Repo : $REPO_SLUG"
+          echo "  Tipe : $APP_TYPE"
+          echo "  Mode : $DEPLOY_MODE"
+          echo "  ZIP  : ${{ env.zip_size }} (${{ env.zip_files }} files)"
+          echo "════════════════════════════════════════════════"
+
+          RESPONSE=$(curl \
+            --silent \
+            --show-error \
+            --max-time 300 \
+            --retry 3 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            -X POST \
+            -F "key=${{ secrets.DEPLOY_API_KEY }}" \
+            -F "repo=$REPO_SLUG" \
+            -F "mode=$DEPLOY_MODE" \
+            -F "file=@deploy.zip;type=application/zip" \
+            "$DEPLOY_URL" 2>&1)
+
+          echo ""
+          echo "────────── RESPONSE DARI SERVER ──────────"
+          echo "$RESPONSE"
+          echo "──────────────────────────────────────────"
+
+          # Simpan untuk summary
+          echo "deploy_response<<ENDRESPONSE" >> "$GITHUB_ENV"
+          echo "$RESPONSE" >> "$GITHUB_ENV"
+          echo "ENDRESPONSE" >> "$GITHUB_ENV"
+
+          # Cek keberhasilan berdasarkan output server
+          if echo "$RESPONSE" | grep -q "AUTODEPLOY v2"; then
+            echo "deploy_success=true" >> "$GITHUB_ENV"
+            echo ""
+            echo "✅ Deploy berhasil dikirim ke server!"
+          else
+            echo "deploy_success=false" >> "$GITHUB_ENV"
+            echo "❌ Deploy gagal!"
+            exit 1
+          fi
+
+      # ── Parse hasil deploy ─────────────────────────────
+      - name: 📊 Parse deploy results
+        if: always()
+        run: |
+          RESPONSE="${{ env.deploy_response }}"
+          DOMAIN=$(echo "$RESPONSE" | grep -oP 'Domain\s+: \K\S+' | head -1 || echo "N/A")
+          PORT=$(echo "$RESPONSE" | grep -oP 'Port\s+: \K\d+' | head -1 || echo "N/A")
+          SSH_USER=$(echo "$RESPONSE" | grep -oP 'SSH User\s+: \K\S+' | head -1 || echo "N/A")
+          SSH_CMD=$(echo "$RESPONSE" | grep -oP 'SSH Cmd\s+: \Kssh\s+\S+' | head -1 || echo "N/A")
+          STATUS=$(echo "$RESPONSE" | grep -oP 'Status Web\s+: \K.+' | head -1 || echo "N/A")
+          SRV=$(echo "$RESPONSE" | grep -oP 'Service\s+: \K\S+' | head -1 || echo "N/A")
+
+          echo "parsed_domain=$DOMAIN" >> "$GITHUB_ENV"
+          echo "parsed_port=$PORT" >> "$GITHUB_ENV"
+          echo "parsed_ssh_user=$SSH_USER" >> "$GITHUB_ENV"
+          echo "parsed_ssh_cmd=$SSH_CMD" >> "$GITHUB_ENV"
+          echo "parsed_web_status=$STATUS" >> "$GITHUB_ENV"
+          echo "parsed_service=$SRV" >> "$GITHUB_ENV"
+
+      # ── Job Summary ───────────────────────────────────
+      - name: 📝 Write job summary
+        if: always()
+        run: |
+          SUCCESS="${{ env.deploy_success }}"
+          TYPE="$APP_TYPE"
+
+          if [[ "$SUCCESS" == "true" ]]; then
+            HEADER_ICON="✅"
+            STATUS_TEXT="BERHASIL"
+          else
+            HEADER_ICON="❌"
+            STATUS_TEXT="GAGAL"
+          fi
+
+          # Tentukan blok info berdasarkan tipe
+          if [[ "$TYPE" == "laravel" ]]; then
+            LIVE_NOTE="⏳ BELUM LIVE — mahasiswa wajib setup via SSH"
+            SETUP_BLOCK="
+          ## 📋 Setup Laravel (Wajib Dilakukan via SSH)
+          \`\`\`bash
+          # 1. Masuk SSH
+          ${{ env.parsed_ssh_cmd }}
+
+          # 2. Masuk ke folder project
+          cd /www/wwwroot/hosting/$REPO_SLUG
+
+          # 3. Install dependencies
+          composer install --no-dev --optimize-autoloader
+
+          # 4. Setup .env
+          cp .env.example .env
+          nano .env   # isi APP_KEY, DB_*, APP_URL
+
+          # 5. Generate key
+          php artisan key:generate
+
+          # 6. Migrate database
+          php artisan migrate --force
+
+          # 7. Storage link
+          php artisan storage:link
+
+          # 8. ★ AKTIFKAN WEB
+          sudo systemctl restart ${{ env.parsed_service }}
+          \`\`\`"
+          else
+            LIVE_NOTE="✅ LIVE — langsung bisa diakses"
+            SETUP_BLOCK=""
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          # ${HEADER_ICON} AutoDeploy v2 — ${STATUS_TEXT}
+
+          | Info | Value |
+          |------|-------|
+          | **Repo** | \`$REPO_SLUG\` |
+          | **Type** | \`$APP_TYPE\` |
+          | **Mode** | \`$DEPLOY_MODE\` |
+          | **Domain** | ${{ env.parsed_domain }} |
+          | **Status Web** | ${LIVE_NOTE} |
+          | **Port** | \`${{ env.parsed_port }}\` |
+          | **SSH User** | \`${{ env.parsed_ssh_user }}\` |
+          | **Service** | \`${{ env.parsed_service }}\` |
+          | **ZIP Size** | ${{ env.zip_size }} |
+          | **Commit** | \`${{ github.sha }}\` |
+          | **Branch** | \`${{ github.ref_name }}\` |
+          | **Actor** | @${{ github.actor }} |
+
+          ## 🌐 URL Aplikasi
+          ${{ env.parsed_domain }}
+
+          ${SETUP_BLOCK}
+
+          ## 📋 Response Lengkap dari Server
+          <details>
+          <summary>Klik untuk lihat output deploy</summary>
+
+          \`\`\`
+          ${{ env.deploy_response }}
+          \`\`\`
+          </details>
+
+          ---
+          *Deployed via AutoDeploy v2 — deployv2.akhzafachrozy.my.id*
+          EOF
+
+      # ── Cleanup ───────────────────────────────────────
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          rm -f deploy.zip .deployinfo
+          echo "✅ Cleanup selesai"
+
+  # ──────────────────────────────────────────────────────
+  #  JOB 3: NOTIFY
+  # ──────────────────────────────────────────────────────
+  notify:
+    name: 📣 Notify
+    runs-on: ubuntu-latest
+    needs: [detect, deploy]
+    if: always() && needs.deploy.result != 'skipped'
+
+    steps:
+      - name: 📣 Print notification
+        run: |
+          RESULT="${{ needs.deploy.result }}"
+          REPO="${{ needs.detect.outputs.repo_slug }}"
+          TYPE="${{ needs.detect.outputs.app_type }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          echo "════════════════════════════════════════════════"
+          if [[ "$RESULT" == "success" ]]; then
+            echo "✅  Deploy BERHASIL"
+          else
+            echo "❌  Deploy GAGAL"
+          fi
+          echo "   Repo   : $REPO ($TYPE)"
+          echo "   Branch : ${{ github.ref_name }}"
+          echo "   Actor  : ${{ github.actor }}"
+          echo "   Log    : $RUN_URL"
+          echo "════════════════════════════════════════════════"
+
+          # ── Integrasi Telegram (uncomment + isi secrets) ──
+          # if [[ "$RESULT" == "success" ]]; then
+          #   MSG="✅ Deploy berhasil%0A📦 $REPO ($TYPE)%0A🌐 https://$REPO.akhzafachrozy.my.id"
+          # else
+          #   MSG="❌ Deploy gagal%0A📦 $REPO%0A🔗 $RUN_URL"
+          # fi
+          # curl -s "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
+          #   -d "chat_id=${{ secrets.TG_CHAT_ID }}&text=$MSG" > /dev/null
+
+          # ── Integrasi Discord (uncomment + isi secrets) ───
+          # curl -s -X POST "${{ secrets.DISCORD_WEBHOOK }}" \
+          #   -H "Content-Type: application/json" \
+          #   -d "{\"content\":\"**Deploy $RESULT** \`$REPO\` ($TYPE)\"}"
