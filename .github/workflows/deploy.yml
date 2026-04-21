@@ -260,9 +260,13 @@ jobs:
           echo "──────────────────────────────────────────"
 
           # Simpan untuk summary
-          echo "deploy_response<<EOF"
-          echo "$RESPONSE"
-          echo "EOF" >> "$GITHUB_ENV"
+          DELIM="END_$(date +%s)"
+          
+          {
+            echo "deploy_response<<$DELIM"
+            echo "$RESPONSE"
+            echo "$DELIM"
+          } >> "$GITHUB_ENV"
 
           # Cek keberhasilan berdasarkan output server
           if echo "$RESPONSE" | grep -q "AUTODEPLOY v2"; then
@@ -279,7 +283,7 @@ jobs:
       - name: 📊 Parse deploy results
         if: always()
         run: |
-          RESPONSE="$deploy_response"
+          RESPONSE="${{ env.deploy_response }}"
           DOMAIN=$(echo "$RESPONSE" | grep -oP 'Domain\s+: \K\S+' | head -1 || echo "N/A")
           PORT=$(echo "$RESPONSE" | grep -oP 'Port\s+: \K\d+' | head -1 || echo "N/A")
           SSH_USER=$(echo "$RESPONSE" | grep -oP 'SSH User\s+: \K\S+' | head -1 || echo "N/A")
