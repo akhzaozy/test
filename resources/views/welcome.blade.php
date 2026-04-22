@@ -22,7 +22,7 @@
         
         <p class="lead mb-4">
             Aplikasi Anda **Telah Berhasil Dijalankan!**
-            <br>Siap diakses melalui port 8080
+            <br>Siap diakses melalui port 8080 via STB BOSSKU
         </p>
 
         <div class="mt-4">
