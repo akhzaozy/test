@@ -22,7 +22,7 @@
         
         <p class="lead mb-4">
             Aplikasi Anda **Telah Berhasil Dijalankan!**
-            <br>Siap diakses melalui port 8080 via STB BOSSKU MANNTAP HIDUP .............
+            <br>Siap diakses melalui port 8080 via STB WOW HIDUP .............
         </p>
 
         <div class="mt-4">
